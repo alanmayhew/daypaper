@@ -22,9 +22,6 @@ G_TRANSITION_INDEX_TABLE = []
 def timeToSeconds(t):
     return (t.hour*3600 + t.minute*60 + t.second) % FULL_DAY_SECONDS
 
-def getCurrentTimeInSeconds():
-    return timeToSeconds(datetime.datetime.now().time())
-
 def secondsToTime(s):
     s %= FULL_DAY_SECONDS
     h = 0
@@ -44,10 +41,15 @@ def updateTimes(latitude, longitude):
     res = resp.json()['results']
     sunrise = res['sunrise']
     sunset = res['sunset']
+    day_length_str = res['day_length']
 
     f = "%I:%M:%S %p"
     sunrise_time = datetime.datetime.strptime(sunrise, f)
     sunset_time = datetime.datetime.strptime(sunset, f)
+
+    day_length = datetime.datetime.strptime(day_length_str, f)
+    day_length = timeToSeconds(day_length)
+    night_length = FULL_DAY_SECONDS - day_length
 
     tz = pytz.timezone(TIMEZONE)
     today = datetime.datetime.today()
@@ -56,26 +58,16 @@ def updateTimes(latitude, longitude):
     sunset_time = datetime.datetime.combine(today, sunset_time.time())
     sunset_time = tz.normalize(sunset_time.replace(tzinfo=pytz.utc)).time()
 
-    sunrise_sec = timeToSeconds(sunrise_time)
-    sunset_sec = timeToSeconds(sunset_time)
+    day_delta = day_length / NUM_DAY_TRANSITIONS
+    night_delta = night_length / NUM_NIGHT_TRANSITIONS
 
-    day_length = abs(sunset_sec - sunrise_sec)
-    night_length = FULL_DAY_SECONDS - day_length
-    day_transition_interval = day_length / NUM_DAY_TRANSITIONS
-    night_transition_interval = night_length / NUM_NIGHT_TRANSITIONS
+    transitions = []
+    for i in range(NUM_DAY_TRANSITIONS):
+        transitions.append(sunrise_time + day_delta*i)
+    for i in range(NUM_NIGHT_TRANSITIONS):
+        transitions.append(sunset_time + night_delta*i)
 
-    day_transitions = []
-    night_transitions = []
-
-    for i in range(NUM_DAY_TRANSITIONS-1):
-        day_transitions.append(sunrise_sec + day_transition_interval*(i+1))
-
-    for i in range(NUM_NIGHT_TRANSITIONS-1):
-        night_transitions.append(sunset_sec + night_transition_interval*(i+1))
-
-    tr = [sunrise_sec] + day_transitions + [sunset_sec] + night_transitions
-    tr = [t % FULL_DAY_SECONDS for t in tr]
-    return (tr, generateLookupTable(tr))
+    return transitions
 
 def fileFilter(filename):
     filename = filename.lower()
@@ -102,32 +94,31 @@ except ValueError:
     sys.exit(0)
 
 
-prev_time = -1
-current_time = -1
+prev_time = None
+current_time = None
 update = True
 
 while True:
-    if current_time != -1:
-        time.sleep(SLEEP_INTERVAL)
     if update:
-        G_IMAGE_FILES = getImageFiles(IMAGE_DIRECTORY)
-        new_tr = updateTimes(latitude_in, longitude_in)
-        (G_TRANSITION_TIMES, G_TRANSITION_INDEX_TABLE) = new_tr
-        if current_time >= FULL_DAY_SECONDS:
-            current_time %= FULL_DAY_SECONDS
         update = False
-        print datetime.datetime.now()
+        G_IMAGE_FILES = getImageFiles(IMAGE_DIRECTORY)
+        G_TRANSITION_TIMES = updateTimes(latitude_in, longitude_in)
+        G_TRANSITION_INDEX_TABLE = generateLookupTable(G_TRANSITION_TIMES)
+        current_time = datetime.datetime.now()
+        # set previous time to yesterday at 23:59:59 (before any time today)
+        prev_time = datetime.datetime.combine(current_time, datetime.time()) - datetime.timedelta(seconds=1)
+        print "Updating transition times at",current_time
         print "Found {} files".format(len(G_IMAGE_FILES))
         tr_str = [str(x) for x in G_TRANSITION_TIMES]
         print "Transition times: {}".format(', '.join(tr_str))
-    prev_time = current_time
-    current_time = getCurrentTimeInSeconds()
-    # check if the seconds have wrapped
-    if prev_time > current_time:
-        # add a full day so the comparisions work out
-        current_time += FULL_DAY_SECONDS
-        # schedule an update
+    else:
+        time.sleep(SLEEP_INTERVAL)
+        prev_time = current_time
+        current_time = datetime.datetime.now()
+
+    if prev_time > G_TRANSITION_TIMES[-1]:
         update = True
+        continue
     transitions_hit = filter(lambda t: prev_time < t and t <= current_time, G_TRANSITION_TIMES)
     if len(transitions_hit) == 0:
         continue
