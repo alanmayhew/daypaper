@@ -65,7 +65,8 @@ def fileFilter(filename):
     return any([filename.endswith(ext) for ext in VALID_EXTENTIONS])
 
 def getImageFiles(dir_path):
-    dir_path = os.path.abspath(dir_path)
+    script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+    dir_path = script_dir + '/' + dir_path
     files = os.listdir(dir_path)
     files = filter(fileFilter, files)
     files.sort()
@@ -83,7 +84,6 @@ try:
 except ValueError:
     print "latitude and longitude must be given in decimal degrees"
     sys.exit(0)
-
 
 prev_time = None
 current_time = None
